@@ -1,7 +1,7 @@
-package org.example.crawler;
+package org.CrawlUrlPhim.crawler;
 
 import com.google.gson.*;
-import org.example.model.Movie;
+import org.CrawlUrlPhim.model.Movie;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;

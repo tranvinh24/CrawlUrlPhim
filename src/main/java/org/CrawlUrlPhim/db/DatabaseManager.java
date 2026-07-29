@@ -1,6 +1,6 @@
-package org.example.db;
+package org.CrawlUrlPhim.db;
 
-import org.example.model.Movie;
+import org.CrawlUrlPhim.model.Movie;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -145,6 +145,47 @@ public class DatabaseManager {
                 return rs.next();
             }
         }
+    }
+
+    /**
+     * Retrieves a fully populated Movie from the database by its source URL.
+     *
+     * @param url the movie page URL (e.g. https://toivote.com/movie/{uuid})
+     * @return populated Movie object, or null if not found
+     */
+    public Movie getMovieByUrl(String url) throws SQLException {
+        String sql = "SELECT id, url, title, year, country FROM movies WHERE url = ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, url);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+
+                Movie movie = new Movie();
+                movie.setId(rs.getString("id"));
+                movie.setUrl(rs.getString("url"));
+                movie.setTitle(rs.getString("title"));
+                movie.setYear(rs.getString("year"));
+                movie.setCountry(rs.getString("country"));
+                movie.setGenres(fetchList("SELECT genre FROM movie_genres WHERE movie_id = ?", movie.getId()));
+                movie.setDirectors(fetchList("SELECT director FROM movie_directors WHERE movie_id = ?", movie.getId()));
+                movie.setActors(fetchList("SELECT actor FROM movie_actors WHERE movie_id = ?", movie.getId()));
+                return movie;
+            }
+        }
+    }
+
+    /**
+     * Helper: fetches a single-column list of strings using a parameterized query.
+     */
+    private List<String> fetchList(String sql, String movieId) throws SQLException {
+        List<String> result = new java.util.ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, movieId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) result.add(rs.getString(1));
+            }
+        }
+        return result;
     }
 
     /**
