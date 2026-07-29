@@ -1,23 +1,26 @@
-package org.example;
+package org.CrawlUrlPhim;
 
-import org.example.crawler.MovieCrawler;
-import org.example.crawler.UrlRepository;
-import org.example.db.DatabaseManager;
-import org.example.model.Movie;
+import org.CrawlUrlPhim.crawler.MovieCrawler;
+import org.CrawlUrlPhim.crawler.UrlRepository;
+import org.CrawlUrlPhim.db.DatabaseManager;
+import org.CrawlUrlPhim.model.Movie;
+import org.CrawlUrlPhim.web.WebServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * Main entry point for the ToiVote Movie Crawler.
  *
- * Workflow:
- * 1. Load ~100 movie URLs from toivote.com
- * 2. For each URL, crawl and extract: title, year, country, genres, directors, actors
- * 3. Save data to SQLite database (movies.db) - which also serves as the disk backup
- * 4. Print a summary
+ * Modes:
+ *   (no args)  — crawl mode: fetch ~100 movie URLs and save to SQLite
+ *   --server   — server mode: start HTTP web service on port 8080
+ *
+ * Server endpoint:
+ *   GET http://localhost:8080/movie?url={movieUrl}
  */
 public class Main {
 
@@ -27,9 +30,9 @@ public class Main {
     private static final long REQUEST_DELAY_MS = 1000;
 
     public static void main(String[] args) {
-        logger.info("=== ToiVote Movie Crawler Starting ===");
+        boolean serverMode = Arrays.asList(args).contains("--server");
 
-        // 1. Initialize database
+        // Initialize database (shared between both modes)
         DatabaseManager db = new DatabaseManager();
         try {
             db.init();
@@ -38,11 +41,44 @@ public class Main {
             System.exit(1);
         }
 
-        // 2. Load URL list
+        if (serverMode) {
+            runServer(db);
+        } else {
+            runCrawler(db);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Server mode
+    // -----------------------------------------------------------------------
+
+    private static void runServer(DatabaseManager db) {
+        logger.info("=== Starting Web Server ===");
+        try {
+            WebServer server = new WebServer(db);
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                server.stop();
+                db.close();
+            }));
+            server.start();
+        } catch (Exception e) {
+            logger.error("Failed to start web server: {}", e.getMessage(), e);
+            System.exit(1);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Crawl mode
+    // -----------------------------------------------------------------------
+
+    private static void runCrawler(DatabaseManager db) {
+        logger.info("=== ToiVote Movie Crawler Starting ===");
+
+        // Load URL list
         List<String> urls = UrlRepository.getUrls();
         logger.info("Loaded {} URLs to crawl.", urls.size());
 
-        // 3. Crawl each URL
+        // Crawl each URL
         MovieCrawler crawler = new MovieCrawler();
         int success = 0, failed = 0, skipped = 0;
 
@@ -78,7 +114,7 @@ public class Main {
             }
         }
 
-        // 4. Summary
+        // Summary
         int totalInDb = db.getMovieCount();
         logger.info("=== Crawl Complete ===");
         logger.info("  URLs processed : {}", urls.size());
