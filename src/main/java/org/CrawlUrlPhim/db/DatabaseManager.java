@@ -1,145 +1,224 @@
-package org.CrawlUrlPhim.db;
+﻿package org.CrawlUrlPhim.db;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.CrawlUrlPhim.model.Movie;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.*;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Handles SQLite database operations for storing crawled movie data.
- * Data is persisted in a local SQLite file (movies.db) which acts as the disk backup.
+ * Handles MySQL database operations for storing crawled movie data.
+ *
+ * <p>Uses HikariCP as a connection pool so multiple threads (crawler, web
+ * server) can safely acquire independent connections without contention.
+ *
+ * <p>Connection settings are read from system properties or fall back to
+ * defaults.  Override at runtime with JVM flags:
+ * <pre>
+ *   -Ddb.host=localhost
+ *   -Ddb.port=3306
+ *   -Ddb.name=movies
+ *   -Ddb.user=root
+ *   -Ddb.password=secret
+ * </pre>
  */
 public class DatabaseManager {
 
     private static final Logger logger = LoggerFactory.getLogger(DatabaseManager.class);
-    private static final String DB_FILE = "movies.db";
-    private static final String DB_URL = "jdbc:sqlite:" + DB_FILE;
 
-    private Connection connection;
+    // -----------------------------------------------------------------------
+    // Configuration (override via system properties)
+    // -----------------------------------------------------------------------
+    private static final String DB_HOST = System.getProperty("db.host",     "localhost");
+    private static final String DB_PORT = System.getProperty("db.port",     "3306");
+    private static final String DB_NAME = System.getProperty("db.name",     "movies");
+    private static final String DB_USER = System.getProperty("db.user",     "root");
+    private static final String DB_PASS = System.getProperty("db.password", "");
+
+    private static final String JDBC_URL =
+            "jdbc:mysql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME
+            + "?useUnicode=true&characterEncoding=UTF-8"
+            + "&serverTimezone=UTC"
+            + "&useSSL=false"
+            + "&allowPublicKeyRetrieval=true";
+
+    // -----------------------------------------------------------------------
+    // HikariCP pool
+    // -----------------------------------------------------------------------
+    private HikariDataSource dataSource;
+
+    // -----------------------------------------------------------------------
+    // Lifecycle
+    // -----------------------------------------------------------------------
 
     /**
-     * Opens the SQLite connection and creates tables if they don't exist.
+     * Initialises the HikariCP connection pool and creates tables if they
+     * do not already exist.
+     *
+     * @throws SQLException if the pool cannot connect or DDL fails
      */
     public void init() throws SQLException {
-        logger.info("Initializing SQLite database: {}", DB_FILE);
-        connection = DriverManager.getConnection(DB_URL);
-        connection.setAutoCommit(false);
+        logger.info("Initialising MySQL database – {}:{}/{}", DB_HOST, DB_PORT, DB_NAME);
+
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl(JDBC_URL);
+        cfg.setUsername(DB_USER);
+        cfg.setPassword(DB_PASS);
+        cfg.setDriverClassName("com.mysql.cj.jdbc.Driver");
+
+        // Pool sizing
+        cfg.setMaximumPoolSize(10);
+        cfg.setMinimumIdle(2);
+        cfg.setConnectionTimeout(30_000);   // 30 s
+        cfg.setIdleTimeout(600_000);        // 10 min
+        cfg.setMaxLifetime(1_800_000);      // 30 min
+
+        // Validate connection on borrow
+        cfg.setConnectionTestQuery("SELECT 1");
+        cfg.setPoolName("MoviePool");
+
+        dataSource = new HikariDataSource(cfg);
+        logger.info("HikariCP pool initialised.");
+
         createTables();
-        logger.info("Database initialized successfully.");
+        logger.info("Database initialised successfully.");
     }
 
+    // -----------------------------------------------------------------------
+    // DDL
+    // -----------------------------------------------------------------------
+
     /**
-     * Creates the movies, genres, directors, actors tables and join tables.
+     * Creates the four normalised tables if they do not already exist.
+     * Uses VARCHAR(255) for primary keys so MySQL can index them efficiently.
      */
     private void createTables() throws SQLException {
-        try (Statement stmt = connection.createStatement()) {
-            // Main movies table
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS movies (
-                    id          TEXT PRIMARY KEY,
-                    url         TEXT NOT NULL,
+                    id          VARCHAR(255) PRIMARY KEY,
+                    url         VARCHAR(2083) NOT NULL,
                     title       TEXT,
-                    year        TEXT,
-                    country     TEXT,
+                    year        VARCHAR(10),
+                    country     VARCHAR(100),
                     crawled_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """);
 
-            // Genres stored as comma-separated in a separate normalized table
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS movie_genres (
-                    movie_id    TEXT NOT NULL,
-                    genre       TEXT NOT NULL,
+                    movie_id    VARCHAR(255) NOT NULL,
+                    genre       VARCHAR(255) NOT NULL,
                     PRIMARY KEY (movie_id, genre),
-                    FOREIGN KEY (movie_id) REFERENCES movies(id)
-                )
+                    FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """);
 
-            // Directors
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS movie_directors (
-                    movie_id    TEXT NOT NULL,
-                    director    TEXT NOT NULL,
+                    movie_id    VARCHAR(255) NOT NULL,
+                    director    VARCHAR(255) NOT NULL,
                     PRIMARY KEY (movie_id, director),
-                    FOREIGN KEY (movie_id) REFERENCES movies(id)
-                )
+                    FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """);
 
-            // Actors
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS movie_actors (
-                    movie_id    TEXT NOT NULL,
-                    actor       TEXT NOT NULL,
+                    movie_id    VARCHAR(255) NOT NULL,
+                    actor       VARCHAR(255) NOT NULL,
                     PRIMARY KEY (movie_id, actor),
-                    FOREIGN KEY (movie_id) REFERENCES movies(id)
-                )
+                    FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """);
 
-            connection.commit();
-            logger.debug("Tables created/verified.");
+            logger.debug("Tables created / verified.");
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Write operations
+    // -----------------------------------------------------------------------
+
     /**
-     * Inserts or replaces a movie and its related data.
+     * Inserts a movie and its related data inside a single transaction.
+     * Skips silently if a movie with the same {@code id} already exists.
      *
      * @param movie the Movie object to persist
-     * @return true if saved successfully
+     * @return {@code true} if the row was inserted; {@code false} if skipped
      */
     public boolean saveMovie(Movie movie) {
         if (movie == null || movie.getId() == null) {
             logger.warn("Attempted to save null or ID-less movie, skipping.");
             return false;
         }
-        try {
-            // Check if already exists
-            if (movieExists(movie.getId())) {
-                logger.info("Movie already exists in DB, skipping: {}", movie.getTitle());
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                if (movieExists(conn, movie.getId())) {
+                    logger.info("Movie already exists in DB, skipping: {}", movie.getTitle());
+                    return false;
+                }
+
+                // INSERT INTO ... ON DUPLICATE KEY UPDATE (no-op on conflict)
+                String sql = """
+                    INSERT INTO movies (id, url, title, year, country)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE id = id
+                """;
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, movie.getId());
+                    ps.setString(2, movie.getUrl());
+                    ps.setString(3, movie.getTitle());
+                    ps.setString(4, movie.getYear());
+                    ps.setString(5, movie.getCountry());
+                    ps.executeUpdate();
+                }
+
+                insertList(conn, movie.getId(), movie.getGenres(),
+                        "INSERT IGNORE INTO movie_genres (movie_id, genre) VALUES (?, ?)");
+
+                insertList(conn, movie.getId(), movie.getDirectors(),
+                        "INSERT IGNORE INTO movie_directors (movie_id, director) VALUES (?, ?)");
+
+                insertList(conn, movie.getId(), movie.getActors(),
+                        "INSERT IGNORE INTO movie_actors (movie_id, actor) VALUES (?, ?)");
+
+                conn.commit();
+                logger.info("Saved movie to DB: [{}] {}", movie.getId(), movie.getTitle());
+                return true;
+
+            } catch (SQLException e) {
+                conn.rollback();
+                logger.error("Failed to save movie {}: {}", movie.getTitle(), e.getMessage());
                 return false;
             }
-
-            // Insert main record
-            String insertMovie = "INSERT OR REPLACE INTO movies (id, url, title, year, country) VALUES (?,?,?,?,?)";
-            try (PreparedStatement ps = connection.prepareStatement(insertMovie)) {
-                ps.setString(1, movie.getId());
-                ps.setString(2, movie.getUrl());
-                ps.setString(3, movie.getTitle());
-                ps.setString(4, movie.getYear());
-                ps.setString(5, movie.getCountry());
-                ps.executeUpdate();
-            }
-
-            // Insert genres
-            insertList(movie.getId(), movie.getGenres(),
-                    "INSERT OR IGNORE INTO movie_genres (movie_id, genre) VALUES (?,?)");
-
-            // Insert directors
-            insertList(movie.getId(), movie.getDirectors(),
-                    "INSERT OR IGNORE INTO movie_directors (movie_id, director) VALUES (?,?)");
-
-            // Insert actors
-            insertList(movie.getId(), movie.getActors(),
-                    "INSERT OR IGNORE INTO movie_actors (movie_id, actor) VALUES (?,?)");
-
-            connection.commit();
-            logger.info("Saved movie to DB: [{}] {}", movie.getId(), movie.getTitle());
-            return true;
-
         } catch (SQLException e) {
-            try { connection.rollback(); } catch (SQLException ex) { /* ignore */ }
-            logger.error("Failed to save movie {}: {}", movie.getTitle(), e.getMessage());
+            logger.error("Connection error while saving movie: {}", e.getMessage());
             return false;
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Read operations
+    // -----------------------------------------------------------------------
+
     /**
-     * Checks whether a movie with the given ID already exists in the database.
+     * Checks whether a movie with the given ID already exists.
+     *
+     * @param conn    an active connection (within the caller's transaction)
+     * @param movieId the UUID to look up
      */
-    public boolean movieExists(String movieId) throws SQLException {
-        String sql = "SELECT 1 FROM movies WHERE id = ?";
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+    public boolean movieExists(Connection conn, String movieId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM movies WHERE id = ?")) {
             ps.setString(1, movieId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
@@ -148,14 +227,25 @@ public class DatabaseManager {
     }
 
     /**
-     * Retrieves a fully populated Movie from the database by its source URL.
+     * Convenience overload – acquires its own connection.
+     */
+    public boolean movieExists(String movieId) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            return movieExists(conn, movieId);
+        }
+    }
+
+    /**
+     * Retrieves a fully populated {@link Movie} by its source URL.
      *
-     * @param url the movie page URL (e.g. https://toivote.com/movie/{uuid})
-     * @return populated Movie object, or null if not found
+     * @param url the movie page URL
+     * @return populated Movie, or {@code null} if not found
      */
     public Movie getMovieByUrl(String url) throws SQLException {
         String sql = "SELECT id, url, title, year, country FROM movies WHERE url = ?";
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
             ps.setString(1, url);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return null;
@@ -166,20 +256,43 @@ public class DatabaseManager {
                 movie.setTitle(rs.getString("title"));
                 movie.setYear(rs.getString("year"));
                 movie.setCountry(rs.getString("country"));
-                movie.setGenres(fetchList("SELECT genre FROM movie_genres WHERE movie_id = ?", movie.getId()));
-                movie.setDirectors(fetchList("SELECT director FROM movie_directors WHERE movie_id = ?", movie.getId()));
-                movie.setActors(fetchList("SELECT actor FROM movie_actors WHERE movie_id = ?", movie.getId()));
+
+                movie.setGenres(fetchList(conn,
+                        "SELECT genre    FROM movie_genres    WHERE movie_id = ?", movie.getId()));
+                movie.setDirectors(fetchList(conn,
+                        "SELECT director FROM movie_directors WHERE movie_id = ?", movie.getId()));
+                movie.setActors(fetchList(conn,
+                        "SELECT actor    FROM movie_actors    WHERE movie_id = ?", movie.getId()));
                 return movie;
             }
         }
     }
 
     /**
-     * Helper: fetches a single-column list of strings using a parameterized query.
+     * Returns the total number of movies stored in the database.
      */
-    private List<String> fetchList(String sql, String movieId) throws SQLException {
-        List<String> result = new java.util.ArrayList<>();
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+    public int getMovieCount() {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM movies")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            logger.error("Error counting movies: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Fetches a single-column list of strings via a parameterised query.
+     */
+    private List<String> fetchList(Connection conn, String sql, String movieId)
+            throws SQLException {
+        List<String> result = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, movieId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) result.add(rs.getString(1));
@@ -189,24 +302,13 @@ public class DatabaseManager {
     }
 
     /**
-     * Returns the count of movies stored in the database.
+     * Batch-inserts a list of string values into a (movie_id, value) table.
+     * Uses {@code INSERT IGNORE} so duplicates are silently skipped.
      */
-    public int getMovieCount() {
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM movies")) {
-            return rs.getInt(1);
-        } catch (SQLException e) {
-            logger.error("Error counting movies: {}", e.getMessage());
-            return 0;
-        }
-    }
-
-    /**
-     * Helper: inserts a list of string values into a table with (movie_id, value) columns.
-     */
-    private void insertList(String movieId, List<String> items, String sql) throws SQLException {
+    private void insertList(Connection conn, String movieId,
+                            List<String> items, String sql) throws SQLException {
         if (items == null || items.isEmpty()) return;
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String item : items) {
                 if (item != null && !item.isBlank()) {
                     ps.setString(1, movieId);
@@ -218,17 +320,17 @@ public class DatabaseManager {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Lifecycle – shutdown
+    // -----------------------------------------------------------------------
+
     /**
-     * Closes the database connection.
+     * Closes the HikariCP pool and releases all connections.
      */
     public void close() {
-        if (connection != null) {
-            try {
-                connection.close();
-                logger.info("Database connection closed.");
-            } catch (SQLException e) {
-                logger.warn("Error closing connection: {}", e.getMessage());
-            }
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+            logger.info("HikariCP pool closed.");
         }
     }
 }

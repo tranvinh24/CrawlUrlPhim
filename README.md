@@ -19,7 +19,8 @@ Công cụ crawl dữ liệu phim viết bằng Java, thu thập thông tin từ
 |-----------------------|-----------------------------------|
 | HTTP / Phân tích HTML | Jsoup 1.17.2                      |
 | Phân tích JSON        | Gson 2.10.1                       |
-| Cơ sở dữ liệu         | SQLite JDBC 3.45.1.0              |
+| Cơ sở dữ liệu         | MySQL 8 + mysql-connector-j 8.3.0 |
+| Connection Pool       | HikariCP 5.1.0                    |
 | Logging               | SLF4J 2.0.12 + Logback 1.5.3     |
 | Build                 | Maven 3, Java 17                  |
 
@@ -38,7 +39,7 @@ movie_actors    (movie_id, actor)
 src/main/java/org/CrawlUrlPhim/
     Main.java                   Điểm vào, hỗ trợ 2 chế độ: crawl và server
     model/Movie.java            Mô hình dữ liệu phim
-    db/DatabaseManager.java     Tầng lưu trữ SQLite
+    db/DatabaseManager.java     Tầng lưu trữ MySQL (HikariCP)
     crawler/UrlRepository.java  Danh sách URL cần crawl
     crawler/MovieCrawler.java   Trích xuất dữ liệu từ HTML
     cache/CacheTTL.java         Cache TTL tùy chỉnh (generic, thread-safe)
@@ -46,6 +47,33 @@ src/main/java/org/CrawlUrlPhim/
     web/MovieHandler.java       Xử lý request, tích hợp cache, trả về JSON
 src/main/resources/
     logback.xml                 Cấu hình logging
+    db.properties               Cấu hình kết nối MySQL (mặc định)
+schema.sql                      Script tạo database MySQL (chạy một lần)
+```
+
+## Cài đặt MySQL
+
+**1. Tạo database (chạy một lần):**
+
+```bash
+mysql -u root -p < schema.sql
+```
+
+**2. Cấu hình kết nối** – chỉnh `src/main/resources/db.properties` hoặc truyền qua JVM flags:
+
+```properties
+db.host=localhost
+db.port=3306
+db.name=movies
+db.user=root
+db.password=your_password
+```
+
+Hoặc truyền khi chạy:
+
+```bash
+java -Ddb.host=localhost -Ddb.password=secret \
+     -jar target/movie-crawler-jar-with-dependencies.jar
 ```
 
 ## Build và chạy
