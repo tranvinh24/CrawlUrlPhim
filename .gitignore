@@ -37,3 +37,7 @@ build/
 
 ### Mac OS ###
 .DS_Store
+# Database credentials
+src/main/resources/db.properties
+movies.db
+logs/

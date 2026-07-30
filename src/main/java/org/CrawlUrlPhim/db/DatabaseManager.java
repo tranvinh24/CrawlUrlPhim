@@ -1,4 +1,4 @@
-﻿package org.CrawlUrlPhim.db;
+package org.CrawlUrlPhim.db;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -6,9 +6,12 @@ import org.CrawlUrlPhim.model.Movie;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 /**
  * Handles MySQL database operations for storing crawled movie data.
@@ -16,35 +19,57 @@ import java.util.List;
  * <p>Uses HikariCP as a connection pool so multiple threads (crawler, web
  * server) can safely acquire independent connections without contention.
  *
- * <p>Connection settings are read from system properties or fall back to
- * defaults.  Override at runtime with JVM flags:
- * <pre>
- *   -Ddb.host=localhost
- *   -Ddb.port=3306
- *   -Ddb.name=movies
- *   -Ddb.user=root
- *   -Ddb.password=secret
- * </pre>
+ * <p>Connection settings are resolved in this priority order:
+ * <ol>
+ *   <li>JVM system property  (e.g. {@code -Ddb.password=secret})</li>
+ *   <li>{@code db.properties} on the classpath</li>
+ *   <li>Built-in default values</li>
+ * </ol>
  */
 public class DatabaseManager {
 
     private static final Logger logger = LoggerFactory.getLogger(DatabaseManager.class);
 
     // -----------------------------------------------------------------------
-    // Configuration (override via system properties)
+    // Configuration â€“ loaded once at class init
     // -----------------------------------------------------------------------
-    private static final String DB_HOST = System.getProperty("db.host",     "localhost");
-    private static final String DB_PORT = System.getProperty("db.port",     "3306");
-    private static final String DB_NAME = System.getProperty("db.name",     "movies");
-    private static final String DB_USER = System.getProperty("db.user",     "root");
-    private static final String DB_PASS = System.getProperty("db.password", "");
+    private static final Properties CONFIG = loadConfig();
 
-    private static final String JDBC_URL =
-            "jdbc:mysql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME
-            + "?useUnicode=true&characterEncoding=UTF-8"
-            + "&serverTimezone=UTC"
-            + "&useSSL=false"
-            + "&allowPublicKeyRetrieval=true";
+    /** Reads db.properties from the classpath; missing keys stay empty. */
+    private static Properties loadConfig() {
+        Properties props = new Properties();
+        try (InputStream is = DatabaseManager.class
+                .getClassLoader().getResourceAsStream("db.properties")) {
+            if (is != null) {
+                props.load(is);
+                LoggerFactory.getLogger(DatabaseManager.class)
+                        .info("Loaded db.properties from classpath.");
+            } else {
+                LoggerFactory.getLogger(DatabaseManager.class)
+                        .warn("db.properties not found on classpath â€“ using system properties / defaults.");
+            }
+        } catch (IOException e) {
+            LoggerFactory.getLogger(DatabaseManager.class)
+                    .error("Failed to read db.properties: {}", e.getMessage());
+        }
+        return props;
+    }
+
+    /**
+     * Resolves a config key: JVM system property â†’ db.properties â†’ default.
+     */
+    private static String cfg(String key, String defaultValue) {
+        String sysProp = System.getProperty(key);
+        if (sysProp != null && !sysProp.isBlank()) return sysProp;
+        String fileProp = CONFIG.getProperty(key);
+        if (fileProp != null && !fileProp.isBlank()) return fileProp;
+        return defaultValue;
+    }
+
+    // -----------------------------------------------------------------------
+    // Derived JDBC URL (built lazily in init())
+    // -----------------------------------------------------------------------
+    private String jdbcUrl;
 
     // -----------------------------------------------------------------------
     // HikariCP pool
@@ -62,12 +87,24 @@ public class DatabaseManager {
      * @throws SQLException if the pool cannot connect or DDL fails
      */
     public void init() throws SQLException {
-        logger.info("Initialising MySQL database – {}:{}/{}", DB_HOST, DB_PORT, DB_NAME);
+        String host = cfg("db.host",     "localhost");
+        String port = cfg("db.port",     "3306");
+        String name = cfg("db.name",     "movies");
+        String user = cfg("db.user",     "root");
+        String pass = cfg("db.password", "");
+
+        jdbcUrl = "jdbc:mysql://" + host + ":" + port + "/" + name
+                + "?useUnicode=true&characterEncoding=UTF-8"
+                + "&serverTimezone=UTC"
+                + "&useSSL=false"
+                + "&allowPublicKeyRetrieval=true";
+
+        logger.info("Initialising MySQL database â€“ {}:{}/{}", host, port, name);
 
         HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(JDBC_URL);
-        cfg.setUsername(DB_USER);
-        cfg.setPassword(DB_PASS);
+        cfg.setJdbcUrl(jdbcUrl);
+        cfg.setUsername(user);
+        cfg.setPassword(pass);
         cfg.setDriverClassName("com.mysql.cj.jdbc.Driver");
 
         // Pool sizing
@@ -227,7 +264,7 @@ public class DatabaseManager {
     }
 
     /**
-     * Convenience overload – acquires its own connection.
+     * Convenience overload â€“ acquires its own connection.
      */
     public boolean movieExists(String movieId) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
@@ -321,7 +358,7 @@ public class DatabaseManager {
     }
 
     // -----------------------------------------------------------------------
-    // Lifecycle – shutdown
+    // Lifecycle â€“ shutdown
     // -----------------------------------------------------------------------
 
     /**
