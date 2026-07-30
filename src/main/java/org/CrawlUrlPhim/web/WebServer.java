@@ -9,10 +9,12 @@ import java.net.InetSocketAddress;
 import java.sql.SQLException;
 
 /**
- * Embedded HTTP web server that exposes movie data from the local SQLite database.
+ * Embedded HTTP web server that exposes movie data from the MySQL database.
  *
- * Endpoint:
- *   GET /movie?url={movieUrl}  — returns movie metadata as pretty-printed JSON
+ * Endpoints:
+ *   GET /movies                 — paginated list of all movies (?page=1&limit=20)
+ *   GET /movie?url={movieUrl}   — single movie by URL (with cache)
+ *   GET /movie/cache-stats      — cache metrics
  *
  * Usage:
  *   Run Main with argument --server
@@ -26,8 +28,9 @@ public class WebServer {
 
     public WebServer(DatabaseManager db) throws Exception {
         server = HttpServer.create(new InetSocketAddress(PORT), 0);
-        server.createContext("/movie", new MovieHandler(db));
-        server.setExecutor(null); // uses default executor
+        server.createContext("/movies", new MoviesListHandler(db));
+        server.createContext("/movie",  new MovieHandler(db));
+        server.setExecutor(null);
     }
 
     /**
@@ -35,7 +38,10 @@ public class WebServer {
      */
     public void start() {
         server.start();
-        logger.info("Web server started on http://localhost:{}/movie?url={{movieUrl}}", PORT);
+        logger.info("Web server started on http://localhost:{}", PORT);
+        logger.info("  GET /movies              — list all movies (paginated)");
+        logger.info("  GET /movie?url={{url}}     — single movie by URL");
+        logger.info("  GET /movie/cache-stats   — cache metrics");
         logger.info("Press Ctrl+C to stop.");
     }
 

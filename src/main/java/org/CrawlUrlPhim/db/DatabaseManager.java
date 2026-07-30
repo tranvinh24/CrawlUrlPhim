@@ -319,6 +319,42 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Returns a paginated list of all movies, ordered by title.
+     *
+     * @param offset number of rows to skip (0-based)
+     * @param limit  maximum number of rows to return
+     * @return list of Movie objects (without full relation details for performance)
+     */
+    public List<Movie> getAllMovies(int offset, int limit) throws SQLException {
+        String sql = "SELECT id, url, title, year, country FROM movies ORDER BY title LIMIT ? OFFSET ?";
+        List<Movie> movies = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setInt(2, offset);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Movie movie = new Movie();
+                    movie.setId(rs.getString("id"));
+                    movie.setUrl(rs.getString("url"));
+                    movie.setTitle(rs.getString("title"));
+                    movie.setYear(rs.getString("year"));
+                    movie.setCountry(rs.getString("country"));
+                    movie.setGenres(fetchList(conn,
+                            "SELECT genre    FROM movie_genres    WHERE movie_id = ?", movie.getId()));
+                    movie.setDirectors(fetchList(conn,
+                            "SELECT director FROM movie_directors WHERE movie_id = ?", movie.getId()));
+                    movie.setActors(fetchList(conn,
+                            "SELECT actor    FROM movie_actors    WHERE movie_id = ?", movie.getId()));
+                    movies.add(movie);
+                }
+            }
+        }
+        return movies;
+    }
+
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
