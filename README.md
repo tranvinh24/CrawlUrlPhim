@@ -11,6 +11,7 @@ Công cụ crawl dữ liệu phim viết bằng Java, thu thập thông tin từ
 - Giới hạn tốc độ request để tránh quá tải server
 - Ghi log có cấu trúc qua SLF4J + Logback
 - Web service trả về dữ liệu phim theo URL dưới dạng JSON
+- **Cache TTL tùy chỉnh** giảm số lần truy cập database cho các URL lặp lại
 
 ## Công nghệ sử dụng
 
@@ -40,8 +41,9 @@ src/main/java/org/CrawlUrlPhim/
     db/DatabaseManager.java     Tầng lưu trữ SQLite
     crawler/UrlRepository.java  Danh sách URL cần crawl
     crawler/MovieCrawler.java   Trích xuất dữ liệu từ HTML
+    cache/CacheTTL.java         Cache TTL tùy chỉnh (generic, thread-safe)
     web/WebServer.java          Khởi động HTTP server trên port 8080
-    web/MovieHandler.java       Xử lý request và trả về JSON
+    web/MovieHandler.java       Xử lý request, tích hợp cache, trả về JSON
 src/main/resources/
     logback.xml                 Cấu hình logging
 ```
@@ -96,6 +98,70 @@ Ví dụ phản hồi:
 ```bash
 docker build -t crawl-url-phim .
 docker run crawl-url-phim
+```
+
+## Cache TTL
+
+Web service tích hợp **`CacheTTL<K, V>`** — một cache tùy chỉnh, generic, thread-safe — để giảm số lần truy cập database khi cùng một URL phim được yêu cầu nhiều lần.
+
+### Cơ chế hoạt động
+
+| Chính sách       | Tham số | Mô tả |
+|------------------|---------|-------|
+| **Write TTL** (m) | 120 s  | Entry tự động xóa sau `m` giây kể từ lần `put()` đầu tiên, bất kể có được đọc hay không |
+| **Idle TTL** (n)  | 30 s   | Entry tự động xóa nếu không có `get()` nào trong `n` giây; mỗi lần đọc thành công **reset** bộ đếm |
+
+Cả hai bộ đếm chạy đồng thời — entry bị xóa khi **một trong hai** điều kiện xảy ra trước.
+
+### Luồng xử lý request
+
+```
+GET /movie?url=...
+        │
+        ▼
+  cache.get(url)  ──HIT──▶  Trả kết quả ngay (không query DB)
+        │
+       MISS
+        │
+        ▼
+  db.getMovieByUrl(url)
+        │
+        ├── Không tìm thấy ──▶  404 Not Found
+        │
+        └── Tìm thấy ──▶  cache.put(url, movie) ──▶  200 OK
+```
+
+### API thống kê cache
+
+```
+GET http://localhost:8080/movie/cache-stats
+```
+
+Ví dụ phản hồi:
+
+```json
+{
+  "cacheSize": 5,
+  "hitRate": "73.33%",
+  "idleTtlSeconds": 30,
+  "writeTtlSeconds": 120,
+  "liveEntries": {
+    "https://toivote.com/movie/...": { "title": "...", "year": "2023" }
+  }
+}
+```
+
+### Class `CacheTTL<K, V>`
+
+```java
+// Khởi tạo: CacheTTL(int idleTtlSeconds, int writeTtlSeconds)
+CacheTTL<String, Movie> cache = new CacheTTL<>(30, 120);
+
+cache.put(url, movie);              // ghi vào cache, bắt đầu cả 2 TTL
+Movie m = cache.get(url);           // đọc; reset idle TTL nếu hit
+Map<String,Movie> all = cache.getMap();  // snapshot tất cả entry còn sống
+double rate = cache.getHitRate();        // tỷ lệ hit (%), ví dụ: 75.0
+cache.shutdown();                   // dừng background eviction thread
 ```
 
 ## Kết quả đầu ra (chế độ crawl)
