@@ -31,6 +31,13 @@
             <version>2.10.1</version>
         </dependency>
 
+        <!-- Guava – LoadingCache / CacheBuilder -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>33.2.1-jre</version>
+        </dependency>
+
         <!-- MySQL Connector/J -->
         <dependency>
             <groupId>com.mysql</groupId>
