@@ -11,7 +11,8 @@ import org.slf4j.LoggerFactory;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
-
+/*
+Chinh sua tren server github */
 /**
  * Main entry point for the ToiVote Movie Crawler.
  *
