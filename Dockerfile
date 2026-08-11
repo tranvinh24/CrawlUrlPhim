@@ -28,5 +28,10 @@ RUN echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
 # Expose SSH port
 EXPOSE 22
 
+# JVM heap settings: initial=125MB, max=512MB
+# Applied via JAVA_OPTS when running the crawler JAR:
+#   java $JAVA_OPTS -jar movie-crawler-jar-with-dependencies.jar --server
+ENV JAVA_OPTS="-Xms125m -Xmx512m"
+
 # Start SSH daemon
 CMD ["/usr/sbin/sshd", "-D"]

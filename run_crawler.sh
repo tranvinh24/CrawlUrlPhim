@@ -21,8 +21,8 @@ while true; do
     echo "[$TIMESTAMP] Run #$RUN_COUNT"
     echo "=========================================="
 
-    # Chạy JAR và ghi log
-    java -jar "$JAR_PATH" 2>&1 | tee -a "$LOG_DIR/crawler_$(date '+%Y%m%d').log"
+    # Chạy JAR và ghi log (Xms=125MB initial heap, Xmx=512MB max heap)
+    java -Xms125m -Xmx512m -jar "$JAR_PATH" 2>&1 | tee -a "$LOG_DIR/crawler_$(date '+%Y%m%d').log"
 
     EXIT_CODE=$?
     if [ $EXIT_CODE -ne 0 ]; then

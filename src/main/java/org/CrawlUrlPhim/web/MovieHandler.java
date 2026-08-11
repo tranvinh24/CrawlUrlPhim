@@ -22,11 +22,20 @@ import java.util.Map;
 /**
  * Handles HTTP GET /movie?url={movieUrl}
  *
- * <p>Results are served from an in-memory {@link CacheTTL} to avoid repeated
- * database hits for the same URL.  The cache is configured with:
+ * <h3>Authentication</h3>
+ * Requires header: {@code Authorization: Bearer <token>}
+ * Obtain a token via {@code POST /login}.
+ *
+ * <h3>Rate Limiting</h3>
+ * Per authenticated user: ≤ 2 requests per 5 s, ≤ 10 requests per 1 min.
+ * Violations return HTTP 429.
+ *
+ * <h3>Caching</h3>
+ * Results are served from an in-memory {@link CacheTTL} to avoid repeated
+ * database hits for the same URL. The cache is configured with:
  * <ul>
- *   <li>Idle TTL  = {@value #CACHE_IDLE_TTL_SECONDS} s – entry evicted if not read for this long</li>
- *   <li>Write TTL = {@value #CACHE_WRITE_TTL_SECONDS} s – entry evicted this long after first write</li>
+ *   <li>Idle TTL  = {@value #CACHE_IDLE_TTL_SECONDS} s</li>
+ *   <li>Write TTL = {@value #CACHE_WRITE_TTL_SECONDS} s</li>
  * </ul>
  *
  * <p>An additional endpoint <b>GET /movie/cache-stats</b> returns a JSON
@@ -49,6 +58,8 @@ public class MovieHandler implements HttpHandler {
     // Fields
     // -----------------------------------------------------------------------
     private final DatabaseManager db;
+    private final AuthManager authManager;
+    private final RateLimiter rateLimiter;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     /**
@@ -61,8 +72,10 @@ public class MovieHandler implements HttpHandler {
     // -----------------------------------------------------------------------
     // Constructor
     // -----------------------------------------------------------------------
-    public MovieHandler(DatabaseManager db) {
+    public MovieHandler(DatabaseManager db, AuthManager authManager, RateLimiter rateLimiter) {
         this.db = db;
+        this.authManager = authManager;
+        this.rateLimiter = rateLimiter;
         logger.info("MovieHandler started – cache idleTTL={}s writeTTL={}s",
                 CACHE_IDLE_TTL_SECONDS, CACHE_WRITE_TTL_SECONDS);
     }
@@ -74,6 +87,19 @@ public class MovieHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
             sendResponse(exchange, 405, buildError("Method not allowed"));
+            return;
+        }
+
+        // --- Authentication check ---
+        String username = resolveUser(exchange);
+        if (username == null) {
+            sendResponse(exchange, 401, buildError("Unauthorized. Please login via POST /login and provide 'Authorization: Bearer <token>' header."));
+            return;
+        }
+
+        // --- Rate limit check ---
+        if (!rateLimiter.isAllowed(username)) {
+            sendResponse(exchange, 429, buildError("Too Many Requests. Limit: 2 requests per 5s and 10 requests per 1 minute."));
             return;
         }
 
@@ -92,7 +118,7 @@ public class MovieHandler implements HttpHandler {
             return;
         }
 
-        logger.info("Request: GET /movie?url={}", movieUrl);
+        logger.info("Request: GET /movie?url={} (user={})", movieUrl, username);
 
         // --- Cache lookup ---
         Movie movie = cache.get(movieUrl);
@@ -118,6 +144,22 @@ public class MovieHandler implements HttpHandler {
             logger.error("Database error: {}", e.getMessage(), e);
             sendResponse(exchange, 500, buildError("Internal server error: " + e.getMessage()));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Auth helper
+    // -----------------------------------------------------------------------
+
+    /**
+     * Extracts and validates the bearer token from the Authorization header.
+     *
+     * @return the username associated with the token, or {@code null} if invalid/missing
+     */
+    private String resolveUser(HttpExchange exchange) {
+        String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        String token = authHeader.substring("Bearer ".length()).trim();
+        return authManager.validateToken(token);
     }
 
     // -----------------------------------------------------------------------

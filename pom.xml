@@ -105,6 +105,19 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- exec-maven-plugin: run with heap settings -Xms125m -Xmx512m -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <configuration>
+                    <mainClass>org.CrawlUrlPhim.Main</mainClass>
+                    <jvmArgs>
+                        <jvmArg>-Xms125m</jvmArg>
+                        <jvmArg>-Xmx512m</jvmArg>
+                    </jvmArgs>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

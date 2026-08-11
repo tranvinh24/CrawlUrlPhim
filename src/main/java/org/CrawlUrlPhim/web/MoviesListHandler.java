@@ -21,9 +21,19 @@ import java.util.Map;
 /**
  * Handles GET /movies — returns a paginated list of all movies in the database.
  *
- * Query parameters:
- *   page  (int, default 1)   — page number (1-based)
- *   limit (int, default 20)  — items per page (max 100)
+ * <h3>Authentication</h3>
+ * Requires header: {@code Authorization: Bearer <token>}
+ * Obtain a token via {@code POST /login}.
+ *
+ * <h3>Rate Limiting</h3>
+ * Per authenticated user: ≤ 2 requests per 5 s, ≤ 10 requests per 1 min.
+ * Violations return HTTP 429.
+ *
+ * <h3>Query parameters</h3>
+ * <ul>
+ *   <li>{@code page}  (int, default 1)  — page number (1-based)</li>
+ *   <li>{@code limit} (int, default 20) — items per page (max 100)</li>
+ * </ul>
  *
  * Example:
  *   GET /movies              → first 20 movies
@@ -37,10 +47,14 @@ public class MoviesListHandler implements HttpHandler {
     private static final int MAX_LIMIT     = 100;
 
     private final DatabaseManager db;
+    private final AuthManager authManager;
+    private final RateLimiter rateLimiter;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
-    public MoviesListHandler(DatabaseManager db) {
+    public MoviesListHandler(DatabaseManager db, AuthManager authManager, RateLimiter rateLimiter) {
         this.db = db;
+        this.authManager = authManager;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
@@ -50,13 +64,28 @@ public class MoviesListHandler implements HttpHandler {
             return;
         }
 
+        // --- Authentication check ---
+        String username = resolveUser(exchange);
+        if (username == null) {
+            sendResponse(exchange, 401, gson.toJson(Map.of(
+                    "error", "Unauthorized. Please login via POST /login and provide 'Authorization: Bearer <token>' header.")));
+            return;
+        }
+
+        // --- Rate limit check ---
+        if (!rateLimiter.isAllowed(username)) {
+            sendResponse(exchange, 429, gson.toJson(Map.of(
+                    "error", "Too Many Requests. Limit: 2 requests per 5s and 10 requests per 1 minute.")));
+            return;
+        }
+
         // Parse query params: page, limit
         int page  = parseIntParam(exchange.getRequestURI(), "page",  1);
         int limit = parseIntParam(exchange.getRequestURI(), "limit", DEFAULT_LIMIT);
         limit = Math.min(limit, MAX_LIMIT);
         int offset = (page - 1) * limit;
 
-        logger.info("Request: GET /movies?page={}&limit={}", page, limit);
+        logger.info("Request: GET /movies?page={}&limit={} (user={})", page, limit, username);
 
         try {
             int total          = db.getMovieCount();
@@ -78,6 +107,22 @@ public class MoviesListHandler implements HttpHandler {
             logger.error("Database error: {}", e.getMessage(), e);
             sendResponse(exchange, 500, gson.toJson(Map.of("error", "Internal server error: " + e.getMessage())));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Auth helper
+    // -----------------------------------------------------------------------
+
+    /**
+     * Extracts and validates the bearer token from the Authorization header.
+     *
+     * @return the username associated with the token, or {@code null} if invalid/missing
+     */
+    private String resolveUser(HttpExchange exchange) {
+        String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+        String token = authHeader.substring("Bearer ".length()).trim();
+        return authManager.validateToken(token);
     }
 
     /** Parses an integer query param; returns defaultValue if absent or invalid. */
