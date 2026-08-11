@@ -28,8 +28,7 @@ Get-Content "$env:USERPROFILE\.ssh\crawler_key.pub"
 ```
 
 Lưu lại public key (`crawler_key.pub`) để dùng ở bước 4.
-ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDQRAsj8iRg4dodrE5f56a2xk26MMGzUHE6EsswoscEDQ/JuJPzGGMy/ET9WNfutonxuVFLAk/U6r9aRPwuGNUrhUoTEOkx4mqj+ROqAyOMvWPVyxO8tpHwU7FO3BxyEq/9u2bLrAWP7fTDRchLNMDsWGJUyHn8dwWS90pGh2FTQMY9Fx891BdPM333M3BDX8AX9hUqsZo3nvm40nmRuyrIIBRK9INT/NmZtIGvB9qK+7DmkGmMOLA0aJGc00FEmb7HY3Pp54bpIf3t35TeI1vyI0c8cy2Vd2l1eb3kbILwA4RPHjTh8EnE3hEhpAfLXchvKVZvQ9lfHm/75sgvcPhJTtUKCVn1RBLm/rslPHrfogFRnbP5UJS6sUxc07CDQq/I2yu/OhACGzpuz7q0jm3pkqGZYIW3yldwO4XbIh04g705Ghn/n5RoIqN8FqUbtMPcQIX0rEgbyuRoHplkU5OuWMWB2rG1Z3BNJ8TQqi+VqOU9eJp+eaxKgDSlX3p9+SeURI2jcEcSJFRPimg+5siGeCC65kJ9JlbGVp8YqKiaU9118MawYxc72ywC1UorZlbzC2CEmFm6nfVRIjHKNMpCLVinx26PrRzvfsSppzJmhcdsL3SyWHXbDENIY+GfgAgapECOVUUV+xHo62ps20wj8QkrxYBSN2kHANTThhXmNw== crawler-key
----
+
 
 ## 3. Build Docker Image
 
